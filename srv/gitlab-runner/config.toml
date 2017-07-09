@@ -1,0 +1,30 @@
+concurrent = 1
+check_interval = 0
+
+[[runners]]
+  name = "docker-runner"
+  limit = 3
+  url = "http://gitlab/ci"
+  token = "3991acbdd9e1d23efab3febd4897c1"
+  executor = "docker"
+  [runners.docker]
+    tls_verify = false
+    image = "maven"
+    privileged = false
+    disable_cache = false
+    volumes = ["/cache"]
+    links = ["gitlab"]
+    shm_size = 0
+  [runners.cache]
+
+[[runners]]
+  name = "docker-shell-runner"
+  limit = 3
+  url = "http://gitlab/ci"
+  token = "0f89026833e8835eaf744040d97b59"
+  executor = "shell"
+  environment = [
+  ]
+  pre_clone_script = "env"
+  pre_build_script = "source /etc/gitlab-runner/scripts/pre_build_script.sh"
+  [runners.cache]

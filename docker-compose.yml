@@ -1,0 +1,25 @@
+version: "3"
+
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    hostname: gitlab.example.com
+    volumes:
+      - $PWD/srv/config:/etc/gitlab
+      - $PWD/srv/logs:/var/log/gitlab
+      - $PWD/srv/data:/var/opt/gitlab
+    ports:
+      - "443:443"
+      - "80:80"
+      - "2022:22"
+
+  gitlab-runner:
+    image: gitlab/gitlab-runner:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - $PWD/srv/gitlab-runner/:/etc/gitlab-runner
+    links:
+     - gitlab:gitlab.example.com
+    ports:
+      - "8080:8080"
+

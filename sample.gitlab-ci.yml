@@ -1,0 +1,34 @@
+
+test:
+  image: gradle
+  tags: [shell]
+  script:
+    - ./gradlew test
+  artifacts:
+    paths:
+      - main/build/reports/tests/
+    when: always
+
+
+review_app:
+  tags: [shell]
+  stage: deploy
+  variables:
+    GIT_STRATEGY: none
+  script: deploy_review main/build/reports/tests/
+  when: always
+  environment:
+    name: review/$CI_COMMIT_REF_NAME
+    url: http://127.0.0.1:8080/$CI_PROJECT_PATH_SLUG/$CI_BUILD_REF_SLUG
+    on_stop: stop_review_app
+
+stop_review_app:
+  tags: [shell]
+  stage: deploy
+  variables:
+    GIT_STRATEGY: none
+  script: undeploy_review
+  when: manual
+  environment:
+    name: review/$CI_COMMIT_REF_NAME
+    action: stop

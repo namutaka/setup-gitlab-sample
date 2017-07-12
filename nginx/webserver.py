@@ -1,70 +1,50 @@
 #!/usr/bin/python
 from logging import basicConfig, getLogger, DEBUG, INFO
-import sys
+import os, sys, json
 from SimpleHTTPServer import SimpleHTTPRequestHandler
 import SocketServer
 import libsaas_gitlab as gitlab
-from libsaas.services import base
+import libsaas
 
 basicConfig(level=DEBUG)
 getLogger('libsaas.executor.urllib2_executor').setLevel(INFO)
 logger = getLogger(__name__)
 
-# ---------------------------
-# monkey patching to libsaas_gitlab
-# ---------------------------
-
-@base.resource(gitlab.users.UsersBase)
-def user(self, user_id):
-    """
-    Get team user by id
-    """
-    return gitlab.users.UsersBase(self, user_id)
-
-@base.resource(gitlab.users.UsersBase)
-def users(self):
-    """
-    Get team users
-    """
-    return gitlab.users.UsersBase(self)
-
-gitlab.projects.Project.user = user
-gitlab.projects.Project.users = users
 
 # ---------------------------
 # Gitlab service
 # ---------------------------
 
 class GitlabService(object):
-  ACCESS_LEVEL_GUEST     = 10
-  ACCESS_LEVEL_REPORTER  = 20
-  ACCESS_LEVEL_DEVELOPER = 30
-  ACCESS_LEVEL_MASTER    = 40
-  ACCESS_LEVEL_OWNER     = 50
 
   def __init__(self, gitlab_url, oauth2_token):
     self.service = gitlab.Gitlab(gitlab_url, None, oauth_token=oauth2_token)
 
   def find_project(self, project_id):
-    return self.service.project(project_id).get()
+    try:
+      return self.service.project(project_id).get()
+    except libsaas.http.HTTPError as e:
+      logger.warn("Failed to find project (project_id=%d): %s", project_id, e)
+      return None
 
-  def get_access_level(self, project):
-    levels = map(lambda key:
-      (project['permissions'].get(key, None) or {}).get('access_level', None),
-      ['group_access', 'project_access'])
-    return min([x for x in levels if x is not None])
 
-  def find_user(self, project_id, username):
-    users = self.service.project(project_id).users().get({'search': username})
-    # search query matches partial. needs to get by strict username
-    return next(iter(filter(lambda u: u['username'] == username, users)), None)
-
+  def can_access_project_repository(self, project_id):
+    try:
+      # try to get repository
+      self.service.project(project_id).repository().tree()
+      return True
+    except libsaas.http.HTTPError as e:
+      logger.warn("Failed to access repository (project_id=%d): %s", project_id, e)
+      return False
 
 # ---------------------------
 # web app
 # ---------------------------
 
-class AuthedHandler(SimpleHTTPRequestHandler):
+class GitlabAccessControllHandler(SimpleHTTPRequestHandler):
+  GITLAB_SERVER = None
+  PROJECT_INFO_FILENAME = '.gitlab-info.json'
+
   def do_FORBIDDEN(self, message = ''):
     self.send_response(403, "forbidden")
     self.send_header('Content-type', 'text/html')
@@ -80,36 +60,70 @@ class AuthedHandler(SimpleHTTPRequestHandler):
     email = self.headers['X-Forwarded-Email']
     logger.debug("email: %s, token: %s", email, token)
 
-    project_id = self.project_id()
-    if project_id is None:
+    request_path = self.path.split('?', 2)[0]
+
+    project_info = self.get_project_info(request_path)
+    if project_info is None or project_info.get('project_id') is None:
       self.do_FORBIDDEN(
-          "Access Denied. project_id does not contain in URL")
+          "Access Denied. .gitlab-info.json is not found or invalid")
       return
 
-    if not self.allows_access(token, project_id):
+    if not self.allows_access(token,
+        project_info.get('project_id'),
+        project_info.get('requires_access_to_code', False)):
       self.do_FORBIDDEN(
-          "Access Denied. project: %s, user: %s" % (project_id, email))
+          "Access Denied. project: %s, user: %s" % (project_info.get('project_id'), email))
       return
 
     return SimpleHTTPRequestHandler.do_GET(self)
 
-  def project_id(self):
-    # required url format is '/any-string/PROJECT_ID/any-atring...'
-    paths = self.path.split('?', 2)[0].split('/')
-    return paths[2] if len(paths) >= 3 else None
+  def get_project_info(self, request_path):
+    if not request_path.endswith('/'):
+      request_path = request_path + "/"
+    paths = request_path.split('/')
+    paths = ['/'.join(paths[0:-i]) for i in range(1, len(paths))]
 
-  def allows_access(self, token, project_id):
-    service = GitlabService(GITLAB_SERVER, token)
+    proj_filepath = None
+    for path in paths:
+      proj_filepath = self.translate_path(path + '/' + self.PROJECT_INFO_FILENAME)
+      if os.path.isfile(proj_filepath):
+        break
+    else:
+      return None
+
+    try:
+      with open(proj_filepath, 'r') as f:
+        return json.load(f)
+    except (IOError, ValueError):
+      logger.exception('Project info file is invalid: %s', proj_filepath)
+      return None
+
+  def allows_access(self, token, project_id, requires_access_to_code):
+    service = GitlabService(self.GITLAB_SERVER, token)
+
     project = service.find_project(project_id)
-    access_level = service.get_access_level(project)
-    logger.debug("access level in project %s: %d", project_id, access_level)
-    return access_level >= GitlabService.ACCESS_LEVEL_REPORTER
+    # the user have no access to this project
+    if project is None:
+      return False
 
-def main(port):
+    # the user requires access to project code
+    if requires_access_to_code:
+      return service.can_access_project_repository(project_id)
+
+    return True
+
+# Start application
+def main():
+  if (len(sys.argv) < 3):
+    print 'Usage: # python %s PORT GITLAB_URL' % sys.argv[0]
+    quit()
+
+  port = int(sys.argv[1], 10)
+  GitlabAccessControllHandler.GITLAB_SERVER = sys.argv[2]
 
   try:
     SocketServer.TCPServer.allow_reuse_address = True
-    server = SocketServer.TCPServer(('', port), AuthedHandler)
+    server = SocketServer.TCPServer(('', port), GitlabAccessControllHandler)
     logger.info('Started httpserver on port %d', port)
 
     server.serve_forever()
@@ -119,12 +133,5 @@ def main(port):
     server.socket.close()
 
 if __name__ == '__main__':
-  if (len(sys.argv) < 3):
-    print 'Usage: # python %s PORT GITLAB_URL' % sys.argv[0]
-    quit()
-
-  PORT_NUMBER = int(sys.argv[1], 10)
-  GITLAB_SERVER = sys.argv[2]
-
-  main(PORT_NUMBER)
+  main()
 

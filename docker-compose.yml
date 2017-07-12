@@ -29,6 +29,7 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/oauth2_proxy.cfg:/etc/oauth2_proxy.cfg:ro
       - ./nginx/supervisord.conf:/etc/supervisor/conf.d/supervisord.conf:ro
+      - ./nginx/webserver.py:/app/webserver.py:ro
       - ./nginx:/nginx
     links:
      - gitlab:gitlab.example.com

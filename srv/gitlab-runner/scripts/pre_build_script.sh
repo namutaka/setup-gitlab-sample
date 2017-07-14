@@ -24,21 +24,32 @@ function setup_permission() {
 EOS
 
 }
-function deploy_review() {
-  local src_path=$1
 
-  mkdir -p /srv/nginx/pages/$CI_PROJECT_PATH_SLUG
-  rsync -av --delete $src_path \
-    /srv/nginx/pages/$CI_PROJECT_PATH_SLUG/$CI_BUILD_REF_SLUG
+function deploy_reviewapp() {
+  local src_path=$1
+  local dest_path=$2
+
+  if [ -z "$src_path" -o -z "$dest_path" ]; then
+    echo "[Error] Usage: deploy_reviewapp SRC_DIR DEST_DIR" >&2
+    return 1
+  fi
+
+  dest_path=$CI_PROJECT_PATH_SLUG/$dest_path
+
+  local base_path=/srv/nginx/pages
+  mkdir -p "$base_path/$(dirname $dest_path)"
+  rsync -av --delete "$src_path" "$base_path/$dest_path"
+
+  echo "Deployed to: http://ci-docker1:8080/$dest_path"
 }
 
-function undeploy_review() {
-  local src_path=$1
+function undeploy_reviewapp() {
+  local dest_path=$1
 
-  rm -rf \
-    /srv/nginx/pages/$CI_PROJECT_PATH_SLUG/$CI_BUILD_REF_SLUG
+  if [ -z "$dest_path" ]; then
+    echo "[Error] Usage: undeploy_reviewapp DEST_DIR" >&2
+    return 1
+  fi
+
+  rm -vrf "/srv/nginx/pages/$CI_PROJECT_PATH_SLUG/$dest_path"
 }
-
-
-#export REVIEW_APP_URL=http://127.0.0.1:8080/$CI_PROJECT_PATH_SLUG-$CI_BUILD_REF_SLUG
-

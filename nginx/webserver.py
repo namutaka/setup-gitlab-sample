@@ -58,7 +58,11 @@ class GitlabAccessControllHandler(SimpleHTTPRequestHandler):
     logger.info("Request Headers: %s", self.headers)
     token = self.headers['X-Forwarded-Access-Token']
     email = self.headers['X-Forwarded-Email']
+    base_dir = self.headers.get('X-Document-Base-Dir')
     logger.debug("email: %s, token: %s", email, token)
+
+    if base_dir:
+        self.path = base_dir + self.path
 
     request_path = self.path.split('?', 2)[0]
 
